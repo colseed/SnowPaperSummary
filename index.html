@@ -1,0 +1,181 @@
+<!doctype html>
+<html>
+<head> 
+	<meta charset="utf-8">
+	<title>CSE590 - Utilizng GPUs for Real-Time Visualization of Snow</title>
+	
+	<!-- <script src="jquery-3.1.1.js"></script> --> 
+	
+	<style>
+	body {
+		/* font-family: "Lucida Console", "Verdana", sans-serif; */
+		background-color: lightblue; 
+		color: darkblue; 
+		
+		padding-left: 32px; 
+		padding-right: 32px; 
+		padding-bottom: 48px;
+		padding-top: 32px; 
+	}
+	
+	a {
+		color: white; 
+	}
+	
+	a:visited {
+		color: white; 
+	}
+	a:hover {
+		color: red; 
+	}
+	
+	img {
+		width: 30%;
+		height: 30%;
+		padding: 5px; 
+	}
+	<!-- pls forgive my css ;-; --> 
+	</style>
+	
+</head>
+
+<body>
+
+	<!-- ASSIGNMENT 1: make webpage
+	
+	- Describe the application and provide a reference (or link) 
+	- Describe the platform(s) where this application was run 
+	[- If it is an HPC application, find peak and LINPACK performance for the platform 
+and its rank on the TOP500 list ]
+	- Find out about reasons for creating a parallel application and anything you can 
+about the performance of your selected application 
+	- What ratio of sustained to peak performance is reported? 
+	- Evaluate project: How did the application scale, I.e. was speed roughly 
+proportional to the number of processors? What were the major difficulties 
+in obtaining good performance? What tools and algorithms were used? 
+
+	--> 
+	
+	CSE590 - Assignment 1<br>
+	Student: Daniel Brown (ID#108029187)<p>
+	
+	<h2>Summary: Utilizing GPUs for Real-Time Visualization of Snow</h2>
+	
+	Source URL: <a href="http://daim.idi.ntnu.no/masteroppgaver/004/4327/masteroppgave.pdf" target="_blank">http://daim.idi.ntnu.no/masteroppgaver/004/4327/masteroppgave.pdf</a>
+	<p>
+	
+	Robin Eidissen, Master of Science in Computer Science<br>
+	February 2009<br>
+	Norwegian University of Science and Technology
+	<p>
+	
+	<h4>Overview</h4>
+	
+	<!-- description of snowfall simulation problem --> 
+	Realistic simulation of snowfall is known to be difficult, due to the computational complexity of tracking and updating multitudes of individual snowflakes in flight.  Doing so in real-time adds another degree of difficulty.  
+	<p>
+	The problem can be divided into a few parts: simulating individual snowflakes in flight, simulating the wind field that affects the snowflakes, and simulating the buildup of snow on solid surfaces upon landing.  Previous work has been done that accomplishes this using single-threading and using multithreading on the CPU; this paper focuses on further increasing performance (and thus the maximum possible scope of such a snow simulation) by using multithreading on the GPU.  
+	<p>
+	
+	
+	<h4>Approach</h4>
+	
+	<!-- description of approach (orig. "Application Description") --> 
+	<!--A summary of the numerical calculations required for the simulation is as follows: 
+	<p> -->
+	<i>1. Simulation of wind field</i>
+	<p> 
+	The wind field is simulated via Computational Fluid Dynamics (CFD), i.e. by discretizing the simulation volume into a 3D grid where each cell holds a wind velocity vector.  For each step of the simulation, every cell in the grid is updated according to the Navier-Stokes equations, with each cell affecting its six immediately adjacent neighbors.  
+	<!--<p>
+	[diagram?] -->
+	<p>
+	
+	<i>2. Simulation of snowflakes</i>
+	<p>
+	Snowflakes are simulated by means of a particle system, with each snowflake particle having a position and velocity.  Individual snowflakes' velocities are then affected by gravity and the wind velocity at any given wind field cell, in addition to a chaotic lift force.  <!--Each snowflake particle is rendered as a billboard, i.e. quad mesh always facing the camera. -->
+	<p> 
+	
+	<i>3. Simulation of snow buildup</i>
+	<p>
+	Solid geometry is represented by a terrain heightmap covering the floor of the simulation volume, rendered as a matrix of triangles with their vertices offset vertically according to a generated black-and-white image.  Snow buildup is then simulated by another triangle matrix overlaid on the terrain heightmap as a sort of "carpet", that grows in height depending on where snowflakes come into contact with it.  
+	<p>
+	<img src="imgs/fig_2-11_exampleheightmapvis.png" alt="Fig 2.11 / pg. 31 (47)"><br>
+	<i>Figure 2.11: Example height map visualization.</i>
+	<p>
+	
+	
+	<h4>Implementation</h4>
+	
+	<!-- description of platform tested on / etc. -->
+	For the implementation described in the paper, NVIDIA GPUs were used in conjunction with NVIDIA's CUDA (C++ like) language.  Rendering was done using GLFW/OpenGL with GLSL shaders for portability purposes.  
+	<p>
+	Rendering of the terrain/snow buildup meshes was optimized by directly modifying the relevant vertex buffer objects (VBOs) on the GPU via the compute shaders.  Snowflakes were rendered using an OpenGL optimized form of billboards (i.e. textured quads rotated to face the camera at all times) called point sprites, and - as they were stored in the form of a single VBO - similarly updated entirely from the GPU side.  
+	<p>
+	Four systems (consisting effectively of one workstation each) were tested, with the primary differences being their GPU cards; these were: the GTX 280, the Tesla c1060, the 8600 GT, and the 9800 GTX.  
+	<p>
+	<img src="imgs/table_4-1_testsystems.png" alt="Table 4.1 / pg. 62 (78)"><br>
+	<i>Table 4.1: Systems used for testing. </i>
+	<p>
+	
+	
+	<h4>Parallelization</h4>
+	
+	<!-- description of how application was parallelized 
+	CUDA
+	avoiding CPU->GPU transfer present in previous multithreaded approach
+	pg 39 (55) - "3.3 Simulation Components": particle/wind simulation challenges --> 
+	Simulation of the snow particles is, to use Eidissen's words, "an embarrassingly parallel problem", as the snowflakes all move independently of one another and snowflake-snowflake collision is ignored.  Snowflake update methods are thus fairly easily threaded off on the GPU, with each particle having its own thread and all the threads being allocated evenly to a set of thread blocks.  The particle VBO is modified and rendered entirely GPU-side, so the CPU to GPU transfer bottleneck is avoided completely.  Particles are not actually removed upon hitting the ground, but simply moved to the top of the simulation volume (to simulate continuing snowfall).  
+	<p>
+	Checking what wind field cell a snow particle is occupying is implemented by storing the wind field as a 3D texture and then using CUDA's hardware texture sampling (apparently an optimization over a regular "trilinear interpolation" lookup).  Collision checking of particles with the ground is also fast, as the particle is only colliding if its height is lower than that of the terrain heightmap at its x and y coordinate.  
+	<p>
+	The simulation of the wind velocity field is then arguably the more complex challenge, as the wind field is comprised of four 3D array structures (for velocity vectors, pressure, solution vectors, and obstacles) spanning the simulation volume.  All of these must be accessed and updated at each step of the simulation, and additionally have computations which depend on neighboring cells.  
+	<p>
+	<img src="imgs/fig_3-8_debugpressurefield.png" alt="Fig 3.8 / pg. 48 (64)"><br>
+	<i>Figure 3.8: Debug rendering of the 3D pressure field, where red areas are low pressure and yellow areas are high pressure.  </i>
+	<p>
+	Essentially, the grids are divided into 3D blocks of cells for processing purposes so that they can be threaded off on the GPU for processing of the necessary CFD calculations.  However, there are complexities inherent in preventing edge cases (i.e., at the borders of blocks) from affecting the parallelized calculations.  As snow buildup is generally on the slower side, updating of the obstacle field is done slower than the other grids, such that a full update occurs only once every 3.5 seconds.  
+	<p>
+	<img src="imgs/fig_3-14_pressureinstability.png" alt="Fig 3.14 / pg. 54 (70)"><br>
+	<i>Figure 3.14: "Numeric instability as seen in the pressure field"; block edges appear to be visible here.  </i>
+	<p>
+	
+	
+	<h4>Performance/Evaluation</h4>
+	
+	<!-- description of performance, how parallelizing helped? - pg. 78 -->
+	The resulting application was able to handle simulations on the orders of two million snow particles, four million wind fluid cells, and a million terrain vertices in real-time.  (For reference, a single-threaded implementation of snow particles running CPU-side tends to cap out at about 4000 particles.)
+	<p>
+	Performance of the various tests is summarized in the graphs below.  Note that 0.016s = 60FPS, 0.033s = 30FPS, and 0.042s = 24FPS; taking this into account, it appears that the GTX 280 card was the only one to maintain realtime performance throughout all tests.  
+	<!-- http://www.geforce.com/hardware/desktop-gpus/geforce-gtx-280/specifications
+		 http://www.nvidia.co.uk/object/tesla_c1060_uk.html
+		 http://www.geforce.com/hardware/notebook-gpus/geforce-gtx-960m/specifications -->
+	<p>
+	<img src="imgs/fig_4-3_scalingfieldnosnow.png" alt="Fig 4.3">
+	<img src="imgs/fig_4-4_scalingfieldconstsnow.png" alt="Fig 4.4"><br>
+	<i>Figures 4.3, 4.4: <b>Left -</b> scaling the number of cells/voxels in the wind field when no snow particles are present; <b>Right -</b> scaling the wind field when a constant number of snow particles (512k) are active.  </i>
+	<p>
+	<img src="imgs/fig_4-5_scalingparticlesnowind.png" alt="Fig 4.5">
+	<img src="imgs/fig_4-6_scalingparticlesconstfield.png" alt="Fig 4.6"><br>
+	<i>Figures 4.5, 4.6: <b>Left -</b> scaling snow particle count when wind field is inactive; <b>Right -</b> scaling snow particle count when wind field is active with constant dimensions 192x192x16 (589,824 voxels).  </i>
+	<p>
+	<img src="imgs/fig_4-7_scalingterrain_constparticles_constwind.png" alt="Fig 4.7"><br>
+	<i>Figure 4.7: Scaling terrain resolution with a constant particle count (512k) and wind field resolution (256x256x32, or 2,097,152).  Note this graph represents FPS on the y-axis (i.e., higher values are better here).</i>
+	<p>
+	
+	
+	<h4>Visual Results</h4>
+	<img src="imgs/fig_4-8.png" alt="Fig 4.8">
+	<img src="imgs/fig_4-9.png" alt="Fig 4.9"><br>
+	<i>Figures 4.8, 4.9: Resulting visualizations with varying numbers of snow particles.</i>
+	<p>
+	<img src="imgs/fig_4-10.png" alt="Fig 4.10"><br>
+	<i>Figure 4.10: Resulting visualization of snow buildup on a blocky shape.</i>
+	<p> 
+	
+	
+	<!-- Platform(s): 
+	(not an HPC app.) -->
+
+</body>
+
+</html>
